@@ -1,0 +1,9 @@
+{
+  "http_bridge": {
+    "enabled": false,
+    "host": "127.0.0.1",
+    "port": 8765,
+    "auth_token": "",
+    "speak": true
+  }
+}

@@ -1,0 +1,11 @@
+# Everything runs locally on this machine.
+openwakeword>=0.6.0        # pretrained "hey jarvis" wake word (ONNX)
+onnxruntime>=1.17          # wake word inference backend
+sounddevice>=0.4.6         # microphone capture (PortAudio)
+numpy>=1.24
+faster-whisper>=1.0        # local speech-to-text
+requests>=2.31             # talks to local Ollama on 127.0.0.1
+pyttsx3>=2.90              # offline Windows (SAPI) voice output
+pywin32>=306; sys_platform == "win32"
+pystray>=0.19              # tray icon
+pillow>=10.0
