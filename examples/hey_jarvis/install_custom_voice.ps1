@@ -32,7 +32,17 @@ if (-not $samplePath) {
 
 $env:HEY_JARVIS_VOICE_SAMPLE = $samplePath.Path
 
-Write-Host "==> Installing XTTS (this is a large download)" -ForegroundColor Cyan
+Write-Host "==> Installing PyTorch audio support (this is the large download)" -ForegroundColor Cyan
+# coqui-tts needs torch *and* torchaudio; the Kokoro install only brings torch,
+# so torchaudio is normally missing and the engine fails at import without it.
+& $python -m pip install torch torchaudio
+if ($LASTEXITCODE -ne 0) { throw "PyTorch installation failed. Scroll up for the first error." }
+& $python -c "import torch, torchaudio; print('    torch', torch.__version__, '/ torchaudio', torchaudio.__version__)"
+if ($LASTEXITCODE -ne 0) {
+    throw "PyTorch is installed but torchaudio will not import. Scroll up for the first error."
+}
+
+Write-Host "==> Installing the voice engine (coqui-tts)" -ForegroundColor Cyan
 # transformers 5.x breaks coqui-tts at import time, so keep it on the 4.x line.
 & $python -m pip install coqui-tts "transformers<5" soundfile
 if ($LASTEXITCODE -ne 0) { throw "XTTS installation failed. Scroll up for the first error." }
