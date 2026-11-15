@@ -176,6 +176,68 @@ def _speak_kokoro(text: str, voice: str) -> None:
     sd.wait()
 
 
+def prepare_sample(
+    sample: Optional[str] = None, target_rate: int = XTTS_SAMPLE_RATE
+) -> str:
+    """Turn any readable recording into a mono wav XTTS can use.
+
+    Recordings arrive as mp3/m4a/stereo/48kHz or a wav name over mp3 data. Rather
+    than making that the user's problem, decode it, downmix, resample and write a
+    clean 16-bit mono file next to the original.
+    """
+    path = sample or sample_path()
+    if not path:
+        raise VoiceError(
+            f"no voice sample configured (set {SAMPLE_ENV} to a wav file)"
+        )
+    if not os.path.exists(path):
+        raise VoiceError(f"voice sample not found: {path}")
+    if path.lower().endswith(".24k.wav"):
+        return path
+
+    try:
+        import numpy as np
+        import soundfile as sf
+    except ImportError as exc:  # pragma: no cover - depends on the machine
+        raise VoiceError("soundfile is not installed (run: pip install soundfile)") from exc
+
+    try:
+        data, rate = sf.read(path, dtype="float32", always_2d=True)
+    except Exception as exc:  # noqa: BLE001
+        raise VoiceError(
+            f"could not read {os.path.basename(path)} as audio ({exc}). "
+            "Re-save it as a wav (Audacity: File > Export > Export as WAV)."
+        ) from exc
+
+    if data.size == 0:
+        raise VoiceError("the voice sample is silent or empty")
+
+    audio = data.mean(axis=1)
+    if rate != target_rate:
+        count = int(round(len(audio) * target_rate / rate))
+        if count <= 1:
+            raise VoiceError("the voice sample is too short to use")
+        source = np.arange(len(audio))
+        audio = np.interp(
+            np.linspace(0, len(audio) - 1, count), source, audio
+        ).astype(np.float32)
+
+    peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
+    if peak <= 1e-6:
+        raise VoiceError(
+            "the voice sample is silent or empty — record again with the microphone "
+            "unmuted, and check it plays back before retrying"
+        )
+    if peak < 0.05:
+        audio = audio * (0.9 / peak)
+    elif peak > 1.0:
+        audio = audio / peak
+
+    prepared = os.path.splitext(path)[0] + ".24k.wav"
+    sf.write(prepared, audio, target_rate, subtype="PCM_16")
+    return prepared
+
+
 def _get_xtts():
     """Load XTTS-v2 once; the model is large and slow to initialise."""
     global _xtts_model
@@ -195,19 +257,13 @@ def _get_xtts():
 
 def _speak_xtts(text: str, sample: Optional[str] = None) -> None:
     """Speak in the voice of a local recording you have the rights to use."""
-    path = sample or sample_path()
-    if not path:
-        raise VoiceError(
-            f"no voice sample configured (set {SAMPLE_ENV} to a wav file)"
-        )
-    if not os.path.exists(path):
-        raise VoiceError(f"voice sample not found: {path}")
+    prepared = prepare_sample(sample)
 
     import numpy as np
     import sounddevice as sd
 
     model = _get_xtts()
-    wav = model.tts(text=text, speaker_wav=path, language="en")
+    wav = model.tts(text=text, speaker_wav=prepared, language="en")
     if not wav:
         raise VoiceError("XTTS produced no audio")
 

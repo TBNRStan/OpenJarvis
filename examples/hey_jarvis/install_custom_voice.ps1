@@ -29,11 +29,18 @@ if (-not $samplePath) {
     throw "Voice sample not found: $Sample  (a 20-30 second wav of the voice to use)"
 }
 
+$env:HEY_JARVIS_VOICE_SAMPLE = $samplePath.Path
+
 Write-Host "==> Installing XTTS (this is a large download)" -ForegroundColor Cyan
 & $python -m pip install coqui-tts soundfile
 if ($LASTEXITCODE -ne 0) { throw "XTTS installation failed. Scroll up for the first error." }
 
-$env:HEY_JARVIS_VOICE_SAMPLE = $samplePath.Path
+Write-Host ""
+Write-Host "==> Checking the recording" -ForegroundColor Cyan
+& $python -c "import voices; print('ready:', voices.prepare_sample())"
+if ($LASTEXITCODE -ne 0) {
+    throw "That recording could not be read as audio. Use a wav, mp3, flac or m4a file of someone speaking."
+}
 
 Write-Host ""
 Write-Host "==> Voice backends" -ForegroundColor Cyan
