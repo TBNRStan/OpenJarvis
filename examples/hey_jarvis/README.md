@@ -47,6 +47,40 @@ type in the window's text box. The tray icon can pause listening or quit.
 `--threshold` (default `0.5`) is how confident the wake-word model must be.
 Raise it if the app wakes on background speech; lower it if it ignores you.
 
+## The voice
+
+The reply voice defaults to Windows' SAPI engine: instant and always present,
+but robotic, and most PCs only ship American voices.
+
+For something much closer to the film's Jarvis -- calm, low, British -- install
+the optional neural voice (one-time download of a few hundred MB, runs on CPU):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_voice.ps1
+```
+
+It installs `kokoro`, prints the available backends, then speaks a test line so
+you can hear it before launching the app. `run.ps1` then picks it up
+automatically: `--voice auto` prefers the neural voice and falls back to SAPI if
+anything is missing, so a broken voice stack never leaves the assistant mute.
+
+Other voices, via `HEY_JARVIS_KOKORO_VOICE` (`bm_george` is the default):
+
+| Value | Voice |
+| --- | --- |
+| `bm_george` | British male, measured -- closest to the film |
+| `bm_lewis` | British male, deeper |
+| `bm_fable` | British male, softer |
+| `am_michael` | American male |
+| `af_heart` | American female |
+
+```powershell
+$env:HEY_JARVIS_KOKORO_VOICE = "bm_lewis"
+.\run.ps1
+```
+
+Force one engine explicitly with `--voice sapi` or `--voice kokoro`.
+
 ## If it mishears you
 
 Accents, quiet speech and distance from the microphone are the usual causes.

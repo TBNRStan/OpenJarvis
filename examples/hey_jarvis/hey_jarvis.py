@@ -25,6 +25,7 @@ from typing import Callable, Optional
 
 import numpy as np
 
+import voices
 from devices import load_devices, stop_devices
 
 # ---------------------------------------------------------------- constants --
@@ -141,12 +142,17 @@ class Assistant:
         ollama_url: str = DEFAULT_OLLAMA,
         model: Optional[str] = None,
         stt_model: Optional[str] = None,
+        voice_backend: str = "auto",
+        voice_name: Optional[str] = None,
     ) -> None:
         self.notify = notify or (lambda kind, text: None)
         self.threshold = threshold
         self.ollama_url = ollama_url.rstrip("/")
         self.model = model
         self.stt_model = stt_model or DEFAULT_STT_MODEL
+        self.voice_backend = voice_backend
+        self.voice_name = voice_name
+        self._voice_used = ""
 
         self._frames: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=200)
         self._typed: "queue.Queue[str]" = queue.Queue()
@@ -435,77 +441,17 @@ class Assistant:
     # -- voice --------------------------------------------------------------
 
     def _speak(self, text: str) -> None:
-        """Read the reply aloud with a Windows system voice, fully offline."""
-        if not text:
+        """Read the reply aloud with the best available local voice."""
+        if not text.strip():
             return
         with self._speak_lock:
-            if sys.platform == "win32":
-                try:
-                    _speak_with_sapi(text)
-                    return
-                except Exception as exc:  # noqa: BLE001 - fall back below
-                    self.notify("error", f"System voice failed ({exc}); trying fallback voice.")
-            self._speak_with_pyttsx3(text)
-
-    def _speak_with_pyttsx3(self, text: str) -> None:
-        """Fallback voice engine, used only when the system voice is unavailable."""
-        try:
-            import pyttsx3
-        except ImportError:
-            self.notify("error", "No voice engine available -- replies will be text only.")
-            return
-
-        engine = None
-        try:
-            engine = pyttsx3.init()
-            engine.setProperty("rate", 178)
-            _prefer_pyttsx3_voice(engine)
-            engine.say(text)
-            engine.runAndWait()
-        except Exception as exc:  # noqa: BLE001 - audio device may be busy
-            self.notify("error", f"Could not speak the reply: {exc}")
-        finally:
             try:
-                if engine is not None:
-                    engine.stop()
-            except Exception:  # noqa: BLE001
-                pass
-
-
-JARVIS_VOICE_KEYWORDS = ("george", "ryan", "david", "mark", "guy", "male")
-
-
-def _speak_with_sapi(text: str) -> None:
-    """Speak through Windows' own SAPI voice: blocking, offline, no downloads."""
-    import win32com.client
-
-    voice = win32com.client.Dispatch("SAPI.SpVoice")
-    try:
-        tokens = voice.GetVoices()
-        for index in range(tokens.Count):
-            token = tokens.Item(index)
-            description = str(token.GetDescription()).lower()
-            if any(keyword in description for keyword in JARVIS_VOICE_KEYWORDS):
-                voice.Voice = token
-                break
-    except Exception:  # noqa: BLE001 - keep the default voice
-        pass
-    voice.Rate = 0  # -10 (slow) .. 10 (fast); 0 is natural speech
-    voice.Speak(text)
-
-
-def _prefer_pyttsx3_voice(engine) -> None:  # noqa: ANN001 - pyttsx3 engine
-    """Pick a calm male system voice when one is available."""
-    try:
-        voices = engine.getProperty("voices") or []
-    except Exception:  # noqa: BLE001
-        return
-    for keyword in JARVIS_VOICE_KEYWORDS:
-        for voice in voices:
-            name = str(getattr(voice, "name", "")).lower()
-            if keyword in name:
-                engine.setProperty("voice", voice.id)
-                return
+                backs = voices.speak(text, backend=self.voice_backend, voice=self.voice_name)
+                if backs and backs != self._voice_used:
+                    self._voice_used = backs
+                    self.notify("hint", f"Voice: {backs}")
+            except Exception as exc:  # noqa: BLE001 - audio device may be busy
+                self.notify("error", f"Could not speak the reply: {exc}")
 
 
 # ----------------------------------------------------------------------- ui --
@@ -717,24 +663,7 @@ def selftest(model: Optional[str], stt_model: Optional[str] = None) -> int:
     except Exception as exc:  # noqa: BLE001
         report(False, "Speech recognition", f"{type(exc).__name__}: {exc}")
 
-    if sys.platform == "win32":
-        try:
-            import win32com.client
-
-            tokens = win32com.client.Dispatch("SAPI.SpVoice").GetVoices()
-            report(tokens.Count > 0, "Voice output", f"{tokens.Count} system voice(s) via SAPI")
-        except Exception as exc:  # noqa: BLE001
-            report(False, "Voice output", f"{type(exc).__name__}: {exc}")
-    else:
-        try:
-            import pyttsx3
-
-            engine = pyttsx3.init()
-            voices = len(engine.getProperty("voices") or [])
-            engine.stop()
-            report(voices > 0, "Voice output", f"{voices} system voice(s)")
-        except Exception as exc:  # noqa: BLE001
-            report(False, "Voice output", f"{type(exc).__name__}: {exc}")
+    report(bool(voices.available()), "Voice output", voices.describe())
 
     reachable, names, message = check_ollama(DEFAULT_OLLAMA)
     if reachable and names:
@@ -777,6 +706,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=None,
         help=f"speech recognition model (default {DEFAULT_STT_MODEL}; try medium.en for harder accents)",
     )
+    parser.add_argument(
+        "--voice",
+        default="auto",
+        choices=("auto", "kokoro", "sapi"),
+        help="voice engine: auto (best available), kokoro (neural British voice), sapi (Windows built-in)",
+    )
     parser.add_argument("--no-ui", action="store_true", help="run in the console instead of a window")
     args = parser.parse_args(argv)
 
@@ -789,6 +724,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             threshold=args.threshold,
             model=args.model,
             stt_model=args.stt,
+            voice_backend=args.voice,
         )
         assistant.start()
         adapters = load_devices(assistant)
@@ -812,6 +748,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         threshold=args.threshold,
         model=args.model,
         stt_model=args.stt,
+        voice_backend=args.voice,
     )
     window = Window(placeholder)
     assistant = Assistant(
@@ -819,6 +756,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         threshold=args.threshold,
         model=args.model,
         stt_model=args.stt,
+        voice_backend=args.voice,
     )
     window.assistant = assistant
 
