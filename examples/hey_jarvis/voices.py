@@ -176,30 +176,42 @@ def _speak_kokoro(text: str, voice: str) -> None:
     sd.wait()
 
 
-def prepare_sample(
-    sample: Optional[str] = None, target_rate: int = XTTS_SAMPLE_RATE
-) -> str:
-    """Turn any readable recording into a mono wav XTTS can use.
+AUDIO_SUFFIXES = (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".opus")
+SAMPLE_GAP_SECONDS = 0.25
+SAMPLE_LIMIT_SECONDS = 60.0
 
-    Recordings arrive as mp3/m4a/stereo/48kHz or a wav name over mp3 data. Rather
-    than making that the user's problem, decode it, downmix, resample and write a
-    clean 16-bit mono file next to the original.
-    """
-    path = sample or sample_path()
-    if not path:
+
+def _sample_inputs(sample: Optional[str]) -> list[str]:
+    """Resolve a file, a comma-separated list, or a folder into audio paths."""
+    value = sample or sample_path()
+    if not value:
         raise VoiceError(
-            f"no voice sample configured (set {SAMPLE_ENV} to a wav file)"
+            f"no voice sample configured (set {SAMPLE_ENV} to a file or folder)"
         )
-    if not os.path.exists(path):
-        raise VoiceError(f"voice sample not found: {path}")
-    if path.lower().endswith(".24k.wav"):
-        return path
 
-    try:
-        import numpy as np
-        import soundfile as sf
-    except ImportError as exc:  # pragma: no cover - depends on the machine
-        raise VoiceError("soundfile is not installed (run: pip install soundfile)") from exc
+    parts = [piece.strip().strip('"') for piece in value.split(",") if piece.strip()]
+    paths: list[str] = []
+    for part in parts:
+        if not os.path.exists(part):
+            raise VoiceError(f"voice sample not found: {part}")
+        if os.path.isdir(part):
+            found = sorted(
+                os.path.join(part, name)
+                for name in os.listdir(part)
+                if name.lower().endswith(AUDIO_SUFFIXES)
+            )
+            if not found:
+                raise VoiceError(f"no audio files in folder: {part}")
+            paths.extend(found)
+        else:
+            paths.append(part)
+    return paths
+
+
+def _load_audio(path: str, target_rate: int):
+    """Decode one file to mono float32 at the target rate."""
+    import numpy as np
+    import soundfile as sf
 
     try:
         data, rate = sf.read(path, dtype="float32", always_2d=True)
@@ -210,30 +222,68 @@ def prepare_sample(
         ) from exc
 
     if data.size == 0:
-        raise VoiceError("the voice sample is silent or empty")
+        raise VoiceError(f"{os.path.basename(path)} is silent or empty")
 
     audio = data.mean(axis=1)
     if rate != target_rate:
         count = int(round(len(audio) * target_rate / rate))
         if count <= 1:
-            raise VoiceError("the voice sample is too short to use")
+            raise VoiceError(f"{os.path.basename(path)} is too short to use")
         source = np.arange(len(audio))
         audio = np.interp(
             np.linspace(0, len(audio) - 1, count), source, audio
         ).astype(np.float32)
+    return audio
+
+
+def prepare_sample(
+    sample: Optional[str] = None, target_rate: int = XTTS_SAMPLE_RATE
+) -> str:
+    """Turn one or more recordings into a single mono wav XTTS can use.
+
+    Recordings arrive as mp3 data behind a .wav name, as stereo, at 48 kHz, at
+    very low level, or as several takes. Decode them all, downmix, resample,
+    join them into one reference and write a clean 16-bit mono file next to the
+    first input. Silent or unreadable files are rejected with a usable message.
+    """
+    try:
+        import numpy as np
+        import soundfile as sf
+    except ImportError as exc:  # pragma: no cover - depends on the machine
+        raise VoiceError("soundfile is not installed (run: pip install soundfile)") from exc
+
+    paths = _sample_inputs(sample)
+    if len(paths) == 1 and paths[0].lower().endswith(".24k.wav"):
+        return paths[0]
+
+    gap = np.zeros(int(SAMPLE_GAP_SECONDS * target_rate), dtype=np.float32)
+    clips = []
+    for path in paths:
+        clip = _load_audio(path, target_rate)
+        peak = float(np.max(np.abs(clip))) if len(clip) else 0.0
+        if peak <= 1e-6:
+            raise VoiceError(
+                f"{os.path.basename(path)} is silent — record again with the "
+                "microphone unmuted, and check it plays back before retrying"
+            )
+        clips.append(clip)
+
+    audio = np.concatenate(
+        [piece for clip in clips for piece in (clip, gap)]
+    )[: int(SAMPLE_LIMIT_SECONDS * target_rate)]
 
     peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
     if peak <= 1e-6:
-        raise VoiceError(
-            "the voice sample is silent or empty — record again with the microphone "
-            "unmuted, and check it plays back before retrying"
-        )
+        raise VoiceError("the voice sample is silent or empty")
     if peak < 0.05:
         audio = audio * (0.9 / peak)
     elif peak > 1.0:
         audio = audio / peak
 
-    prepared = os.path.splitext(path)[0] + ".24k.wav"
+    if len(paths) == 1:
+        prepared = os.path.splitext(paths[0])[0] + ".24k.wav"
+    else:
+        prepared = os.path.join(os.path.dirname(paths[0]) or ".", "voice.24k.wav")
     sf.write(prepared, audio, target_rate, subtype="PCM_16")
     return prepared
 

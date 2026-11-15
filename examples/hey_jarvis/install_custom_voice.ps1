@@ -9,6 +9,7 @@
 #   * This is a large install (~2 GB with torch) and speech is slower on CPU.
 #
 #   .\install_custom_voice.ps1 -Sample my_voice.wav
+#   .\install_custom_voice.ps1 -Sample .\my_takes        # a folder of takes
 #   .\install_custom_voice.ps1 -Sample my_voice.wav -Quiet
 
 param(
@@ -26,7 +27,7 @@ if (-not (Test-Path $python)) {
 
 $samplePath = Resolve-Path -Path $Sample -ErrorAction SilentlyContinue
 if (-not $samplePath) {
-    throw "Voice sample not found: $Sample  (a 20-30 second wav of the voice to use)"
+    throw "Voice sample not found: $Sample  (a recording of the voice to use, or a folder of takes)"
 }
 
 $env:HEY_JARVIS_VOICE_SAMPLE = $samplePath.Path

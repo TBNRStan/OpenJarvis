@@ -94,6 +94,10 @@ powershell -ExecutionPolicy Bypass -File .\install_custom_voice.ps1 -Sample my_v
 A clean 20–30 second recording with one speaker and no background noise works best.
 Any format the machine can decode (wav, mp3, flac) is converted to mono 24 kHz
 automatically — even an mp3 that Windows is mistakenly labelling as a wav.
+
+Several takes can be combined into one voice: point `-Sample` at a folder, or
+give a comma-separated list. They are joined into a single reference (capped at
+60 seconds), which clones more steadily than one short clip.
 The file stays on this PC; nothing is uploaded. Afterwards:
 
 ```powershell
