@@ -81,6 +81,14 @@ $env:HEY_JARVIS_KOKORO_VOICE = "bm_lewis"
 
 Force one engine explicitly with `--voice sapi` or `--voice kokoro`.
 
+If `pip` reports **"no matching distribution found for kokoro"**, the Python in
+`.venv` is newer than 3.12 and the neural voice cannot be installed at all.
+Rebuild the environment with a supported Python:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\rebuild_venv.ps1
+```
+
 Replies are cleaned before they are spoken — markdown, links and emoji are
 removed rather than pronounced — and synthesised one sentence at a time, because
 neural voices drift on long passages. The default pace is slightly under

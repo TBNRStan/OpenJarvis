@@ -7,30 +7,31 @@
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 
-Write-Host "==> Finding Python 3.10-3.13" -ForegroundColor Cyan
+Write-Host "==> Finding Python 3.10-3.12" -ForegroundColor Cyan
 
+# 3.12 first: the neural voice (kokoro) publishes no wheels above 3.12, so a
+# newer interpreter would install the assistant but leave it on the robotic
+# Windows voice.
 function Get-PythonLauncher {
     $candidates = @(
-        @{ Exe = "py";     Args = @("-3.13") },
         @{ Exe = "py";     Args = @("-3.12") },
         @{ Exe = "py";     Args = @("-3.11") },
-        @{ Exe = "py";     Args = @("-3.10") },
-        @{ Exe = "python"; Args = @() }
+        @{ Exe = "py";     Args = @("-3.10") }
     )
     foreach ($candidate in $candidates) {
         if (-not (Get-Command $candidate.Exe -ErrorAction SilentlyContinue)) { continue }
         try {
             $version = & $candidate.Exe @($candidate.Args + @("-c", "import sys;print('%d.%d'%sys.version_info[:2])")) 2>$null
         } catch { continue }
-        if ($version -match '^3\.(10|11|12|13)$') { return $candidate }
+        if ($version -match '^3\.(10|11|12)$') { return $candidate }
     }
     return $null
 }
 
 $python = Get-PythonLauncher
 if (-not $python) {
-    Write-Host "Python 3.10-3.13 not found. Installing Python 3.13 with winget..." -ForegroundColor Yellow
-    winget install --id Python.Python.3.13 --silent --accept-package-agreements --accept-source-agreements
+    Write-Host "Python 3.10-3.12 not found. Installing Python 3.12 with winget..." -ForegroundColor Yellow
+    winget install --id Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + `
                 [System.Environment]::GetEnvironmentVariable("Path", "User")
     $python = Get-PythonLauncher

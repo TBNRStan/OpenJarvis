@@ -22,6 +22,11 @@ if (-not (Test-Path $python)) {
     throw "The app is not set up yet. Run setup.ps1 first."
 }
 
+$pyVersion = & $python -c "import sys;print('%d.%d'%sys.version_info[:2])"
+if ([version]$pyVersion -ge [version]"3.13") {
+    throw "This environment uses Python $pyVersion, but the neural voice needs 3.10-3.12. Run rebuild_venv.ps1 first, then run this again."
+}
+
 Write-Host "==> Installing the neural voice (kokoro + soundfile)" -ForegroundColor Cyan
 & $python -m pip install "kokoro>=0.9" soundfile
 if ($LASTEXITCODE -ne 0) { throw "Voice installation failed. Scroll up for the first error." }
