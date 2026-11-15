@@ -18,6 +18,7 @@ Changing the voice:
 from __future__ import annotations
 
 import os
+import re
 import sys
 import threading
 from typing import Optional
@@ -31,6 +32,11 @@ FALLBACK_SAPI_KEYWORDS = ("david", "mark", "guy", "male")
 KOKORO_SAMPLE_RATE = 24000
 XTTS_SAMPLE_RATE = 24000
 SAMPLE_ENV = "HEY_JARVIS_VOICE_SAMPLE"
+
+# A butler speaks a little under conversational pace; 1.0 is the model default.
+DEFAULT_SPEED = float(os.environ.get("HEY_JARVIS_VOICE_SPEED", "0.96"))
+# Neural voices drift on long passages, so replies are synthesised sentence-wise.
+MAX_CHUNK_CHARS = 240
 
 _pipeline = None
 _xtts_model = None
@@ -105,19 +111,78 @@ def describe() -> str:
 # ------------------------------------------------------------------ speaking --
 
 
+def clean_for_speech(text: str) -> str:
+    """Strip things that must not be read aloud: markdown, links, emoji, symbols.
+
+    The model is asked for plain prose, but it still slips into ``**bold**``,
+    bullets and the odd emoji, and a voice that pronounces the asterisks sounds
+    broken rather than clever.
+    """
+    text = re.sub(r"https?://\S+", "", text)
+    text = text.replace("```", " ")
+    text = re.sub(r"(?m)^\s*[-*•]\s+", "", text)
+    text = re.sub(r"[*_`#>|~]+", "", text)
+    text = "".join(
+        char
+        for char in text
+        if not (
+            0x1F000 <= ord(char) <= 0x1FAFF
+            or 0x2600 <= ord(char) <= 0x27BF
+            or 0xFE0F == ord(char)
+        )
+    )
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def split_for_speech(text: str, limit: int = MAX_CHUNK_CHARS) -> list[str]:
+    """Break a reply into speakable pieces at sentence boundaries."""
+    sentences = [piece.strip() for piece in re.split(r"(?<=[.!?])\s+", text)]
+    chunks: list[str] = []
+    current = ""
+    for sentence in sentences:
+        if not sentence:
+            continue
+        while len(sentence) > limit:
+            cut = sentence.rfind(" ", 0, limit)
+            cut = cut if cut > 0 else limit
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(sentence[:cut].strip())
+            sentence = sentence[cut:].strip()
+        if not current:
+            current = sentence
+        elif len(current) + 1 + len(sentence) <= limit:
+            current = f"{current} {sentence}"
+        else:
+            chunks.append(current)
+            current = sentence
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def speak(
     text: str,
     backend: str = "auto",
     voice: Optional[str] = None,
     sample: Optional[str] = None,
+    speed: Optional[float] = None,
 ) -> str:
     """Speak ``text``; return the backend that did it.
 
-    ``backend`` is ``auto``, ``kokoro`` or ``sapi``. With ``auto`` the first
-    working backend wins, so a missing dependency degrades instead of failing.
+    ``backend`` is ``auto``, ``xtts``, ``kokoro`` or ``sapi``. With ``auto`` the
+    first working backend wins, so a missing dependency degrades instead of
+    failing. Text is cleaned and spoken sentence by sentence: neural voices
+    wobble on long passages, and a reply that stops mid-way must not restart in
+    a different voice.
     """
-    if not text.strip():
+    cleaned = clean_for_speech(text)
+    if not cleaned:
         return ""
+    chunks = split_for_speech(cleaned)
+    pace = DEFAULT_SPEED if speed is None else float(speed)
+    pace = max(0.5, min(2.0, pace))
 
     configured_sample = sample or sample_path()
     order: list[str] = []
@@ -130,16 +195,24 @@ def speak(
 
     errors: list[str] = []
     for name in order:
+        spoken = 0
         try:
-            if name == "xtts":
-                _speak_xtts(text, configured_sample)
-            elif name == "kokoro":
-                _speak_kokoro(text, voice or DEFAULT_KOKORO_VOICE)
-            else:
-                _speak_sapi(text)
-            return name
+            for chunk in chunks:
+                if name == "xtts":
+                    _speak_xtts(chunk, configured_sample, pace)
+                elif name == "kokoro":
+                    _speak_kokoro(chunk, voice or DEFAULT_KOKORO_VOICE, pace)
+                else:
+                    _speak_sapi(chunk, pace)
+                spoken += 1
         except Exception as exc:  # noqa: BLE001 - try the next backend
             errors.append(f"{name}: {exc}")
+            if spoken:
+                # Half a reply has already been said aloud; do not repeat it
+                # from the top in another voice.
+                raise VoiceError("; ".join(errors)) from exc
+            continue
+        return name
 
     raise VoiceError("; ".join(errors) or "no voice backend available")
 
@@ -160,13 +233,13 @@ def _get_pipeline():
         return _pipeline
 
 
-def _speak_kokoro(text: str, voice: str) -> None:
+def _speak_kokoro(text: str, voice: str, speed: float = DEFAULT_SPEED) -> None:
     import numpy as np
     import sounddevice as sd
 
     pipeline = _get_pipeline()
     chunks: list[np.ndarray] = []
-    for _graphemes, _phonemes, audio in pipeline(text, voice=voice, speed=1.0):
+    for _graphemes, _phonemes, audio in pipeline(text, voice=voice, speed=speed):
         if audio is not None:
             chunks.append(np.asarray(audio, dtype=np.float32))
     if not chunks:
@@ -236,6 +309,21 @@ def _load_audio(path: str, target_rate: int):
     return audio
 
 
+def _trim_silence(audio, threshold: float = 0.002, pad_seconds: float = 0.05):
+    """Drop the dead air before and after speech so the reference stays tight."""
+    import numpy as np
+
+    if not len(audio):
+        return audio
+    loud = np.abs(audio) > threshold
+    if not loud.any():
+        return audio
+    start = int(np.argmax(loud))
+    end = len(audio) - int(np.argmax(loud[::-1]))
+    pad = int(pad_seconds * XTTS_SAMPLE_RATE)
+    return audio[max(0, start - pad) : min(len(audio), end + pad)]
+
+
 def prepare_sample(
     sample: Optional[str] = None, target_rate: int = XTTS_SAMPLE_RATE
 ) -> str:
@@ -266,11 +354,14 @@ def prepare_sample(
                 f"{os.path.basename(path)} is silent — record again with the "
                 "microphone unmuted, and check it plays back before retrying"
             )
-        clips.append(clip)
+        clips.append(_trim_silence(clip))
 
-    audio = np.concatenate(
-        [piece for clip in clips for piece in (clip, gap)]
-    )[: int(SAMPLE_LIMIT_SECONDS * target_rate)]
+    joined: list = []
+    for index, clip in enumerate(clips):
+        if index:
+            joined.append(gap)
+        joined.append(clip)
+    audio = np.concatenate(joined)[: int(SAMPLE_LIMIT_SECONDS * target_rate)]
 
     peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
     if peak <= 1e-6:
@@ -305,7 +396,9 @@ def _get_xtts():
         return _xtts_model
 
 
-def _speak_xtts(text: str, sample: Optional[str] = None) -> None:
+def _speak_xtts(
+    text: str, sample: Optional[str] = None, speed: float = DEFAULT_SPEED
+) -> None:
     """Speak in the voice of a local recording you have the rights to use."""
     prepared = prepare_sample(sample)
 
@@ -313,7 +406,7 @@ def _speak_xtts(text: str, sample: Optional[str] = None) -> None:
     import sounddevice as sd
 
     model = _get_xtts()
-    wav = model.tts(text=text, speaker_wav=prepared, language="en")
+    wav = model.tts(text=text, speaker_wav=prepared, language="en", speed=speed)
     if not wav:
         raise VoiceError("XTTS produced no audio")
 
@@ -321,7 +414,7 @@ def _speak_xtts(text: str, sample: Optional[str] = None) -> None:
     sd.wait()
 
 
-def _speak_sapi(text: str) -> None:
+def _speak_sapi(text: str, speed: float = DEFAULT_SPEED) -> None:
     """Speak through Windows' built-in engine (blocking)."""
     import win32com.client
 
@@ -343,5 +436,5 @@ def _speak_sapi(text: str) -> None:
     except Exception:  # noqa: BLE001 - keep the system default voice
         pass
 
-    voice.Rate = 0  # -10 (slow) .. 10 (fast)
+    voice.Rate = max(-10, min(10, round((speed - 1.0) * 10)))  # -10 slow .. 10 fast
     voice.Speak(text)

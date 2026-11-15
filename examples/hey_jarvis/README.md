@@ -81,6 +81,25 @@ $env:HEY_JARVIS_KOKORO_VOICE = "bm_lewis"
 
 Force one engine explicitly with `--voice sapi` or `--voice kokoro`.
 
+Replies are cleaned before they are spoken — markdown, links and emoji are
+removed rather than pronounced — and synthesised one sentence at a time, because
+neural voices drift on long passages. The default pace is slightly under
+conversational (`0.96`); adjust it with `--voice-speed` (0.9 is calmer, 1.0 is
+the model default):
+
+```powershell
+.\run.ps1 --voice-speed 0.92
+```
+
+To hear a voice without starting the whole assistant:
+
+```powershell
+.\.venv\Scripts\python.exe hey_jarvis.py --say "Good evening, sir. All systems are online."
+```
+
+Add `--voice xtts --voice-sample .\my_takes` to audition the custom voice, or
+`--voice kokoro` for the built-in British one.
+
 ### Your own voice
 
 A third backend clones a voice from a local recording: XTTS-v2 running on your

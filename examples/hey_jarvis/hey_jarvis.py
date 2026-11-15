@@ -145,6 +145,7 @@ class Assistant:
         voice_backend: str = "auto",
         voice_name: Optional[str] = None,
         voice_sample: Optional[str] = None,
+        voice_speed: float = voices.DEFAULT_SPEED,
     ) -> None:
         self.notify = notify or (lambda kind, text: None)
         self.threshold = threshold
@@ -154,6 +155,7 @@ class Assistant:
         self.voice_backend = voice_backend
         self.voice_name = voice_name
         self.voice_sample = voice_sample
+        self.voice_speed = voice_speed
         self._voice_used = ""
 
         self._frames: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=200)
@@ -453,6 +455,7 @@ class Assistant:
                     backend=self.voice_backend,
                     voice=self.voice_name,
                     sample=self.voice_sample,
+                    speed=self.voice_speed,
                 )
                 if backs and backs != self._voice_used:
                     self._voice_used = backs
@@ -724,8 +727,33 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=None,
         help="wav file to clone for the custom voice (also HEY_JARVIS_VOICE_SAMPLE)",
     )
+    parser.add_argument(
+        "--voice-speed",
+        type=float,
+        default=voices.DEFAULT_SPEED,
+        help="speech pace: 1.0 is the model default, 0.9 is slower and calmer",
+    )
+    parser.add_argument(
+        "--say",
+        default=None,
+        help="speak this phrase once, then exit -- the quickest way to audition a voice",
+    )
     parser.add_argument("--no-ui", action="store_true", help="run in the console instead of a window")
     args = parser.parse_args(argv)
+
+    if args.say:
+        try:
+            used = voices.speak(
+                args.say,
+                backend=args.voice,
+                sample=args.voice_sample,
+                speed=args.voice_speed,
+            )
+        except voices.VoiceError as exc:
+            print(f"Could not speak: {exc}", file=sys.stderr)
+            return 1
+        print(f"spoken with: {used}")
+        return 0
 
     if args.selftest:
         return selftest(args.model, args.stt)
@@ -738,6 +766,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             stt_model=args.stt,
             voice_backend=args.voice,
             voice_sample=args.voice_sample,
+            voice_speed=args.voice_speed,
         )
         assistant.start()
         adapters = load_devices(assistant)
@@ -763,6 +792,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         stt_model=args.stt,
         voice_backend=args.voice,
         voice_sample=args.voice_sample,
+        voice_speed=args.voice_speed,
     )
     window = Window(placeholder)
     assistant = Assistant(
@@ -772,6 +802,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         stt_model=args.stt,
         voice_backend=args.voice,
         voice_sample=args.voice_sample,
+        voice_speed=args.voice_speed,
     )
     window.assistant = assistant
 
