@@ -33,7 +33,8 @@ if (-not $samplePath) {
 $env:HEY_JARVIS_VOICE_SAMPLE = $samplePath.Path
 
 Write-Host "==> Installing XTTS (this is a large download)" -ForegroundColor Cyan
-& $python -m pip install coqui-tts soundfile
+# transformers 5.x breaks coqui-tts at import time, so keep it on the 4.x line.
+& $python -m pip install coqui-tts "transformers<5" soundfile
 if ($LASTEXITCODE -ne 0) { throw "XTTS installation failed. Scroll up for the first error." }
 
 Write-Host ""
@@ -46,6 +47,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "==> Voice backends" -ForegroundColor Cyan
 & $python -c "import voices; print(voices.describe())"
+& $python -c "import voices; print('custom voice:', voices.xtts_status())"
 
 if (-not $Quiet) {
     Write-Host ""

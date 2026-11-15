@@ -69,13 +69,31 @@ def kokoro_available() -> bool:
     return True
 
 
+_xtts_error: Optional[str] = None
+
+
 def xtts_available() -> bool:
     """XTTS-v2 speaks in a voice cloned from a local sample (non-commercial licence)."""
+    return xtts_status() == "ready"
+
+
+def xtts_status() -> str:
+    """``ready``, or the real reason the package will not import.
+
+    The underlying failure is kept verbatim: a missing dependency or a numpy
+    clash looks identical to "not installed" otherwise, and guessing wastes the
+    user's time.
+    """
+    global _xtts_error
+    if _xtts_error == "ready":
+        return "ready"
     try:
-        import TTS  # noqa: F401
-    except Exception:  # noqa: BLE001
-        return False
-    return True
+        from TTS.api import TTS  # noqa: F401
+    except Exception as exc:  # noqa: BLE001
+        _xtts_error = f"{type(exc).__name__}: {exc}"
+        return _xtts_error
+    _xtts_error = "ready"
+    return "ready"
 
 
 def sample_path() -> Optional[str]:
@@ -96,16 +114,25 @@ def available() -> list[str]:
     return names
 
 
+def _xtts_note() -> str:
+    """Why the custom voice is unavailable, for humans reading a diagnosis."""
+    status = xtts_status()
+    if status == "ready":
+        return ""
+    return f" | custom voice unavailable -- {status}"
+
+
 def describe() -> str:
     names = available()
+    note = _xtts_note()
     if not names:
-        return "none (install kokoro, or run on Windows for SAPI)"
+        return "none (install kokoro, or run on Windows for SAPI)" + note
     detail = ", ".join(names)
     if "kokoro" in names:
         detail += f" (voice {DEFAULT_KOKORO_VOICE})"
     if "xtts" in names:
         detail += f" (custom sample: {sample_path()})"
-    return detail
+    return detail + note
 
 
 # ------------------------------------------------------------------ speaking --
@@ -386,9 +413,9 @@ def _get_xtts():
         if _xtts_model is None:
             try:
                 from TTS.api import TTS
-            except ImportError as exc:
+            except Exception as exc:  # noqa: BLE001
                 raise VoiceError(
-                    "XTTS is not installed (run: pip install coqui-tts soundfile)"
+                    f"the custom voice engine could not load -- {type(exc).__name__}: {exc}"
                 ) from exc
             _xtts_model = TTS(
                 model_name="tts_models/multilingual/multi-dataset/xtts_v2"
@@ -401,11 +428,13 @@ def _speak_xtts(
 ) -> None:
     """Speak in the voice of a local recording you have the rights to use."""
     prepared = prepare_sample(sample)
+    # Load the engine before touching audio hardware: a broken install is the
+    # likelier failure and must not be reported as a playback problem.
+    model = _get_xtts()
 
     import numpy as np
     import sounddevice as sd
 
-    model = _get_xtts()
     wav = model.tts(text=text, speaker_wav=prepared, language="en", speed=speed)
     if not wav:
         raise VoiceError("XTTS produced no audio")
