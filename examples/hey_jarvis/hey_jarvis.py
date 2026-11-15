@@ -144,6 +144,7 @@ class Assistant:
         stt_model: Optional[str] = None,
         voice_backend: str = "auto",
         voice_name: Optional[str] = None,
+        voice_sample: Optional[str] = None,
     ) -> None:
         self.notify = notify or (lambda kind, text: None)
         self.threshold = threshold
@@ -152,6 +153,7 @@ class Assistant:
         self.stt_model = stt_model or DEFAULT_STT_MODEL
         self.voice_backend = voice_backend
         self.voice_name = voice_name
+        self.voice_sample = voice_sample
         self._voice_used = ""
 
         self._frames: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=200)
@@ -446,7 +448,12 @@ class Assistant:
             return
         with self._speak_lock:
             try:
-                backs = voices.speak(text, backend=self.voice_backend, voice=self.voice_name)
+                backs = voices.speak(
+                    text,
+                    backend=self.voice_backend,
+                    voice=self.voice_name,
+                    sample=self.voice_sample,
+                )
                 if backs and backs != self._voice_used:
                     self._voice_used = backs
                     self.notify("hint", f"Voice: {backs}")
@@ -709,8 +716,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--voice",
         default="auto",
-        choices=("auto", "kokoro", "sapi"),
-        help="voice engine: auto (best available), kokoro (neural British voice), sapi (Windows built-in)",
+        choices=("auto", "kokoro", "sapi", "xtts"),
+        help="voice engine: auto (best available), xtts (your own sample), kokoro (neural British), sapi (Windows)",
+    )
+    parser.add_argument(
+        "--voice-sample",
+        default=None,
+        help="wav file to clone for the custom voice (also HEY_JARVIS_VOICE_SAMPLE)",
     )
     parser.add_argument("--no-ui", action="store_true", help="run in the console instead of a window")
     args = parser.parse_args(argv)
@@ -725,6 +737,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             model=args.model,
             stt_model=args.stt,
             voice_backend=args.voice,
+            voice_sample=args.voice_sample,
         )
         assistant.start()
         adapters = load_devices(assistant)
@@ -749,6 +762,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         model=args.model,
         stt_model=args.stt,
         voice_backend=args.voice,
+        voice_sample=args.voice_sample,
     )
     window = Window(placeholder)
     assistant = Assistant(
@@ -757,6 +771,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         model=args.model,
         stt_model=args.stt,
         voice_backend=args.voice,
+        voice_sample=args.voice_sample,
     )
     window.assistant = assistant
 

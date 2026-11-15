@@ -81,6 +81,30 @@ $env:HEY_JARVIS_KOKORO_VOICE = "bm_lewis"
 
 Force one engine explicitly with `--voice sapi` or `--voice kokoro`.
 
+### Your own voice
+
+A third backend clones a voice from a local recording: XTTS-v2 running on your
+CPU. Use a recording you have the rights to — your own voice, or someone who has
+given you permission.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_custom_voice.ps1 -Sample my_voice.wav
+```
+
+A clean 20–30 second wav with one speaker and no background noise works best.
+The file stays on this PC; nothing is uploaded. Afterwards:
+
+```powershell
+$env:HEY_JARVIS_VOICE_SAMPLE = "$PWD\my_voice.wav"
+.\run.ps1                       # auto now prefers your sample
+.\run.ps1 --voice xtts          # or force it
+```
+
+Two caveats: the XTTS-v2 model licence is **non-commercial** (personal use only),
+and generation is slower than Kokoro on CPU. Film or broadcast audio of a real
+person is copyrighted separately from their spoken permission, so keep to
+audio you recorded yourself.
+
 ## If it mishears you
 
 Accents, quiet speech and distance from the microphone are the usual causes.

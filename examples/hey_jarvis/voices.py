@@ -29,8 +29,11 @@ BRITISH_SAPI_KEYWORDS = ("george", "ryan", "thomas", "arthur", "james")
 FALLBACK_SAPI_KEYWORDS = ("david", "mark", "guy", "male")
 
 KOKORO_SAMPLE_RATE = 24000
+XTTS_SAMPLE_RATE = 24000
+SAMPLE_ENV = "HEY_JARVIS_VOICE_SAMPLE"
 
 _pipeline = None
+_xtts_model = None
 _pipeline_lock = threading.Lock()
 
 
@@ -60,9 +63,26 @@ def kokoro_available() -> bool:
     return True
 
 
+def xtts_available() -> bool:
+    """XTTS-v2 speaks in a voice cloned from a local sample (non-commercial licence)."""
+    try:
+        import TTS  # noqa: F401
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+def sample_path() -> Optional[str]:
+    """Path to the recording used by the custom voice, if one is configured."""
+    configured = os.environ.get(SAMPLE_ENV, "").strip()
+    return configured or None
+
+
 def available() -> list[str]:
     """Backends usable on this machine, best first."""
     names: list[str] = []
+    if xtts_available() and sample_path():
+        names.append("xtts")
     if kokoro_available():
         names.append("kokoro")
     if sapi_available():
@@ -77,13 +97,20 @@ def describe() -> str:
     detail = ", ".join(names)
     if "kokoro" in names:
         detail += f" (voice {DEFAULT_KOKORO_VOICE})"
+    if "xtts" in names:
+        detail += f" (custom sample: {sample_path()})"
     return detail
 
 
 # ------------------------------------------------------------------ speaking --
 
 
-def speak(text: str, backend: str = "auto", voice: Optional[str] = None) -> str:
+def speak(
+    text: str,
+    backend: str = "auto",
+    voice: Optional[str] = None,
+    sample: Optional[str] = None,
+) -> str:
     """Speak ``text``; return the backend that did it.
 
     ``backend`` is ``auto``, ``kokoro`` or ``sapi``. With ``auto`` the first
@@ -92,7 +119,10 @@ def speak(text: str, backend: str = "auto", voice: Optional[str] = None) -> str:
     if not text.strip():
         return ""
 
+    configured_sample = sample or sample_path()
     order: list[str] = []
+    if backend == "xtts" or (backend == "auto" and configured_sample):
+        order.append("xtts")
     if backend in ("auto", "kokoro"):
         order.append("kokoro")
     if backend in ("auto", "sapi"):
@@ -101,7 +131,9 @@ def speak(text: str, backend: str = "auto", voice: Optional[str] = None) -> str:
     errors: list[str] = []
     for name in order:
         try:
-            if name == "kokoro":
+            if name == "xtts":
+                _speak_xtts(text, configured_sample)
+            elif name == "kokoro":
                 _speak_kokoro(text, voice or DEFAULT_KOKORO_VOICE)
             else:
                 _speak_sapi(text)
@@ -141,6 +173,45 @@ def _speak_kokoro(text: str, voice: str) -> None:
         raise VoiceError("kokoro produced no audio")
 
     sd.play(np.concatenate(chunks), KOKORO_SAMPLE_RATE)
+    sd.wait()
+
+
+def _get_xtts():
+    """Load XTTS-v2 once; the model is large and slow to initialise."""
+    global _xtts_model
+    with _pipeline_lock:
+        if _xtts_model is None:
+            try:
+                from TTS.api import TTS
+            except ImportError as exc:
+                raise VoiceError(
+                    "XTTS is not installed (run: pip install coqui-tts soundfile)"
+                ) from exc
+            _xtts_model = TTS(
+                model_name="tts_models/multilingual/multi-dataset/xtts_v2"
+            ).to("cpu")
+        return _xtts_model
+
+
+def _speak_xtts(text: str, sample: Optional[str] = None) -> None:
+    """Speak in the voice of a local recording you have the rights to use."""
+    path = sample or sample_path()
+    if not path:
+        raise VoiceError(
+            f"no voice sample configured (set {SAMPLE_ENV} to a wav file)"
+        )
+    if not os.path.exists(path):
+        raise VoiceError(f"voice sample not found: {path}")
+
+    import numpy as np
+    import sounddevice as sd
+
+    model = _get_xtts()
+    wav = model.tts(text=text, speaker_wav=path, language="en")
+    if not wav:
+        raise VoiceError("XTTS produced no audio")
+
+    sd.play(np.asarray(wav, dtype=np.float32), XTTS_SAMPLE_RATE)
     sd.wait()
 
 
