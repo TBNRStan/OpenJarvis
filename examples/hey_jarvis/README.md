@@ -47,6 +47,34 @@ type in the window's text box. The tray icon can pause listening or quit.
 `--threshold` (default `0.5`) is how confident the wake-word model must be.
 Raise it if the app wakes on background speech; lower it if it ignores you.
 
+## If it mishears you
+
+Accents, quiet speech and distance from the microphone are the usual causes.
+Three knobs, in order of impact:
+
+```powershell
+# 1. Bigger recognition model: much better with accents, ~500 MB, slower
+.\venv\Scripts\python.exe hey_jarvis.py --stt medium.en
+
+# 2. Harder accents still, or noisy rooms (largest download, slowest)
+.\venv\Scripts\python.exe hey_jarvis.py --stt large-v3
+
+# 3. Wake word too eager or too deaf
+.\venv\Scripts\python.exe hey_jarvis.py --threshold 0.65
+```
+
+Available sizes: `tiny.en`, `base.en`, `small.en` (the default), `medium.en`,
+`large-v3`. The `.en` variants are English-only and more accurate for English;
+`large-v3` is multilingual but several times slower on CPU. Quiet recordings are
+normalised automatically before transcription, so speaking softly no longer
+degrades accuracy as much as it used to.
+
+Set it once for good with an environment variable instead of a flag:
+
+```powershell
+$env:HEY_JARVIS_STT = "medium.en"
+```
+
 ## Connecting devices later
 
 Devices plug in through `devices/` and are switched on in `devices.json`. Each

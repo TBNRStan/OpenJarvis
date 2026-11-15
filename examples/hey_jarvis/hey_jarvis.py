@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import queue
 import sys
 import threading
@@ -35,7 +36,12 @@ BLOCK_SECONDS = BLOCK / SAMPLE_RATE
 WAKE_MODEL = "hey_jarvis"
 DEFAULT_THRESHOLD = 0.5
 
-SILENCE_TAIL_SECONDS = 1.0  # stop recording after this much quiet
+SILENCE_TAIL_SECONDS = 1.2  # stop recording after this much quiet
+
+# Speech recognition model. "base.en" is the fastest; "small.en" and
+# "medium.en" are markedly better with accents and quiet speech, at the cost of
+# a larger one-time download and slower transcription.
+DEFAULT_STT_MODEL = os.environ.get("HEY_JARVIS_STT", "small.en")
 MAX_UTTERANCE_SECONDS = 15.0
 NO_SPEECH_TIMEOUT = 6.0
 WAKE_COOLDOWN_SECONDS = 0.8
@@ -74,6 +80,22 @@ def to_float_audio(frames: list[np.ndarray]) -> np.ndarray:
         return np.zeros(0, dtype=np.float32)
     audio = np.concatenate(frames).astype(np.float32) / 32768.0
     return np.clip(audio, -1.0, 1.0)
+
+
+def normalize_audio(audio: np.ndarray, target_peak: float = 0.9) -> np.ndarray:
+    """Lift quiet recordings to a consistent level.
+
+    Recognition quality drops sharply when the speaker is far from the mic or
+    speaks softly, which hits non-native speakers hardest. Scaling to a
+    consistent peak removes that variable. Near-silence is left untouched so
+    noise is not amplified into words.
+    """
+    if audio.size == 0:
+        return audio
+    peak = float(np.max(np.abs(audio)))
+    if peak < 0.02:
+        return audio
+    return np.clip(audio * (target_peak / peak), -1.0, 1.0)
 
 
 def check_ollama(url: str, timeout: float = 3.0) -> tuple[bool, list[str], str]:
@@ -118,11 +140,13 @@ class Assistant:
         threshold: float = DEFAULT_THRESHOLD,
         ollama_url: str = DEFAULT_OLLAMA,
         model: Optional[str] = None,
+        stt_model: Optional[str] = None,
     ) -> None:
         self.notify = notify or (lambda kind, text: None)
         self.threshold = threshold
         self.ollama_url = ollama_url.rstrip("/")
         self.model = model
+        self.stt_model = stt_model or DEFAULT_STT_MODEL
 
         self._frames: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=200)
         self._typed: "queue.Queue[str]" = queue.Queue()
@@ -228,8 +252,13 @@ class Assistant:
         from faster_whisper import WhisperModel
 
         if self._whisper is None:
-            self.notify("hint", "Loading speech recognition (first run downloads it)...")
-            self._whisper = WhisperModel("base.en", device="cpu", compute_type="int8")
+            self.notify(
+                "hint",
+                f"Loading speech recognition '{self.stt_model}' (first run downloads it)...",
+            )
+            self._whisper = WhisperModel(
+                self.stt_model, device="cpu", compute_type="int8"
+            )
         return self._whisper
 
     # -- main loop ----------------------------------------------------------
@@ -329,9 +358,15 @@ class Assistant:
         return captured
 
     def _transcribe(self, frames: list[np.ndarray]) -> str:
-        audio = to_float_audio(frames)
+        audio = normalize_audio(to_float_audio(frames))
         model = self._load_whisper()
-        segments, _info = model.transcribe(audio, language="en", vad_filter=True)
+        segments, _info = model.transcribe(
+            audio,
+            language="en",
+            vad_filter=True,
+            beam_size=5,  # more search per word: better on unfamiliar accents
+            condition_on_previous_text=False,  # one utterance, no drift from earlier ones
+        )
         return " ".join(segment.text.strip() for segment in segments).strip()
 
     # -- brain --------------------------------------------------------------
@@ -646,9 +681,10 @@ class Tray:
 # ----------------------------------------------------------------- selftest --
 
 
-def selftest(model: Optional[str]) -> int:
+def selftest(model: Optional[str], stt_model: Optional[str] = None) -> int:
     """Check every dependency and device without listening to anything."""
     failures = 0
+    speech_model = stt_model or DEFAULT_STT_MODEL
 
     def report(ok: bool, label: str, detail: str = "") -> None:
         nonlocal failures
@@ -677,7 +713,7 @@ def selftest(model: Optional[str]) -> int:
     try:
         import faster_whisper  # noqa: F401
 
-        report(True, "Speech recognition (faster-whisper)")
+        report(True, "Speech recognition (faster-whisper)", f"model: {speech_model}")
     except Exception as exc:  # noqa: BLE001
         report(False, "Speech recognition", f"{type(exc).__name__}: {exc}")
 
@@ -736,17 +772,23 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--selftest", action="store_true", help="check dependencies and devices, then exit")
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, help="wake word sensitivity (0-1)")
     parser.add_argument("--model", default=None, help="Ollama model name to use")
+    parser.add_argument(
+        "--stt",
+        default=None,
+        help=f"speech recognition model (default {DEFAULT_STT_MODEL}; try medium.en for harder accents)",
+    )
     parser.add_argument("--no-ui", action="store_true", help="run in the console instead of a window")
     args = parser.parse_args(argv)
 
     if args.selftest:
-        return selftest(args.model)
+        return selftest(args.model, args.stt)
 
     if args.no_ui:
         assistant = Assistant(
             notify=lambda kind, text: print(f"{kind}: {text}" if text else kind, flush=True),
             threshold=args.threshold,
             model=args.model,
+            stt_model=args.stt,
         )
         assistant.start()
         adapters = load_devices(assistant)
@@ -765,9 +807,19 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"A graphical window is unavailable ({exc}). Re-run with --no-ui.", file=sys.stderr)
         return 1
 
-    placeholder = Assistant(notify=lambda kind, text: None, threshold=args.threshold, model=args.model)
+    placeholder = Assistant(
+        notify=lambda kind, text: None,
+        threshold=args.threshold,
+        model=args.model,
+        stt_model=args.stt,
+    )
     window = Window(placeholder)
-    assistant = Assistant(notify=_make_notifier(window), threshold=args.threshold, model=args.model)
+    assistant = Assistant(
+        notify=_make_notifier(window),
+        threshold=args.threshold,
+        model=args.model,
+        stt_model=args.stt,
+    )
     window.assistant = assistant
 
     try:
