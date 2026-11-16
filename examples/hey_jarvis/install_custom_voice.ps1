@@ -11,10 +11,14 @@
 #   .\install_custom_voice.ps1 -Sample my_voice.wav
 #   .\install_custom_voice.ps1 -Sample .\my_takes        # a folder of takes
 #   .\install_custom_voice.ps1 -Sample my_voice.wav -Quiet
+#   .\install_custom_voice.ps1 -Sample my_voice.wav -AcceptTerms
 
 param(
     [Parameter(Mandatory = $true)][string]$Sample,
-    [switch]$Quiet
+    [switch]$Quiet,
+    # Records that you accept the XTTS-v2 model licence (CPML, non-commercial)
+    # so the first download does not stop at an interactive y/n prompt.
+    [switch]$AcceptTerms
 )
 
 $ErrorActionPreference = "Stop"
@@ -31,6 +35,12 @@ if (-not $samplePath) {
 }
 
 $env:HEY_JARVIS_VOICE_SAMPLE = $samplePath.Path
+
+if ($AcceptTerms) {
+    # Same effect as answering "y": consent to the non-commercial CPML.
+    $env:COQUI_TOS_AGREED = "1"
+    Write-Host "    licence: accepting the non-commercial CPML for this run" -ForegroundColor Gray
+}
 
 Write-Host "==> Installing PyTorch audio support (this is the large download)" -ForegroundColor Cyan
 # coqui-tts needs torch *and* torchaudio; the Kokoro install only brings torch,
