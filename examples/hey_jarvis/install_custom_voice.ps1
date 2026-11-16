@@ -43,9 +43,12 @@ if ($AcceptTerms) {
 }
 
 Write-Host "==> Installing PyTorch audio support (this is the large download)" -ForegroundColor Cyan
-# coqui-tts needs torch *and* torchaudio; the Kokoro install only brings torch,
-# so torchaudio is normally missing and the engine fails at import without it.
-& $python -m pip install torch torchaudio
+# Coqui needs torch *and* torchaudio, and from PyTorch 2.9 onwards it decodes
+# audio through torchcodec, which then needs a matching DLL set plus FFmpeg.
+# Staying on 2.8 uses torchaudio's built-in decoding: fewer moving parts, and no
+# version pairing to get wrong. torchcodec is removed so it cannot be picked up.
+& $python -m pip uninstall -y torchcodec 2>$null
+& $python -m pip install "torch>=2.6,<2.9" "torchaudio>=2.6,<2.9"
 if ($LASTEXITCODE -ne 0) { throw "PyTorch installation failed. Scroll up for the first error." }
 & $python -c "import torch, torchaudio; print('    torch', torch.__version__, '/ torchaudio', torchaudio.__version__)"
 if ($LASTEXITCODE -ne 0) {
@@ -54,8 +57,8 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "==> Installing the voice engine (coqui-tts + codec)" -ForegroundColor Cyan
 # transformers 5.x breaks coqui-tts at import time, so keep it on the 4.x line.
-# The codec extra brings torchcodec, required for audio IO from PyTorch 2.9 on.
-& $python -m pip install "coqui-tts[codec]" "transformers<5" soundfile
+# No codec extra: torch 2.8 decodes through torchaudio and never needs it.
+& $python -m pip install coqui-tts "transformers<5" soundfile
 if ($LASTEXITCODE -ne 0) { throw "XTTS installation failed. Scroll up for the first error." }
 
 function Test-VoiceEngine {
