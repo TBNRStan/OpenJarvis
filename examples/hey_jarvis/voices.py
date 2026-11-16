@@ -23,6 +23,13 @@ import sys
 import threading
 from typing import Optional
 
+if sys.platform == "win32":
+    # Windows only allows symlinks in Developer Mode or as administrator, so a
+    # model download fails at the final step with WinError 1314 after fetching
+    # every byte. Copying the files instead costs disk but always works.
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
 DEFAULT_KOKORO_VOICE = os.environ.get("HEY_JARVIS_KOKORO_VOICE", "bm_george")
 
 # Windows SAPI voices worth preferring: British and calm first, then any male.
