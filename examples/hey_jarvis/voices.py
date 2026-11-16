@@ -109,15 +109,31 @@ def sample_path() -> Optional[str]:
     return configured or None
 
 
+def prefer_custom() -> bool:
+    """Opt in to using the cloned voice without asking for it every time."""
+    return os.environ.get("HEY_JARVIS_PREFER_CUSTOM", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
 def available() -> list[str]:
-    """Backends usable on this machine, best first."""
+    """Backends usable on this machine, best first.
+
+    The custom voice is deliberately last unless opted into: it is the most
+    fragile part of the stack, and a broken clone must never be the reason
+    Jarvis goes quiet. Say ``--voice xtts`` to use it explicitly.
+    """
     names: list[str] = []
-    if xtts_available() and sample_path():
+    if prefer_custom() and xtts_available() and sample_path():
         names.append("xtts")
     if kokoro_available():
         names.append("kokoro")
     if sapi_available():
         names.append("sapi")
+    if not prefer_custom() and xtts_available() and sample_path():
+        names.append("xtts")
     return names
 
 
@@ -220,12 +236,19 @@ def speak(
 
     configured_sample = sample or sample_path()
     order: list[str] = []
-    if backend == "xtts" or (backend == "auto" and configured_sample):
-        order.append("xtts")
-    if backend in ("auto", "kokoro"):
-        order.append("kokoro")
-    if backend in ("auto", "sapi"):
-        order.append("sapi")
+    # Reliable voices first; the clone only when explicitly asked for, or when
+    # the user has opted into it with HEY_JARVIS_PREFER_CUSTOM=1. Every path
+    # ends with the built-in voices so a broken choice cannot silence Jarvis.
+    if backend == "sapi":
+        order = ["sapi"]
+    elif backend == "kokoro":
+        order = ["kokoro", "sapi"]
+    elif backend == "xtts":
+        order = ["xtts", "kokoro", "sapi"]
+    else:
+        if prefer_custom() and configured_sample:
+            order.append("xtts")
+        order.extend(["kokoro", "sapi"])
 
     errors: list[str] = []
     for name in order:

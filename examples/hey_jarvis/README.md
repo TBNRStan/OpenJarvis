@@ -129,12 +129,22 @@ The file stays on this PC; nothing is uploaded. Afterwards:
 
 ```powershell
 $env:HEY_JARVIS_VOICE_SAMPLE = "$PWD\my_voice.wav"
-.\run.ps1                       # auto now prefers your sample
+.\run.ps1 --voice xtts          # use the clone for this run
+$env:HEY_JARVIS_PREFER_CUSTOM = "1"
+.\run.ps1                       # use the clone every time
 .\run.ps1 --voice xtts          # or force it
 ```
 
-Two caveats: the XTTS-v2 model licence is **non-commercial** (personal use only),
-and generation is slower than Kokoro on CPU. Film or broadcast audio of a real
+The clone is opt-in: `auto` keeps using Kokoro, because the clone is the most
+fragile part of the stack and must never be why Jarvis goes quiet. Two further
+caveats: the XTTS-v2 model licence is **non-commercial** (personal use only), and
+generation is slower than Kokoro on CPU.
+
+If it never works, take it back out with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\remove_custom_voice.ps1 -DeleteModel
+``` Film or broadcast audio of a real
 person is copyrighted separately from their spoken permission, so keep to
 audio you recorded yourself.
 
