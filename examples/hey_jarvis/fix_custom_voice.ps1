@@ -24,9 +24,15 @@ if (-not (Test-Path $python)) {
 }
 
 Write-Host "==> What is installed now" -ForegroundColor Cyan
-& $python -c "import torch; print('    torch     ', torch.__version__)"
-& $python -c "import torchcodec; print('    torchcodec', torchcodec.__version__)" 2>$null
-& $python -c "import torchaudio; print('    torchaudio', torchaudio.__version__)" 2>$null
+# Diagnostics may legitimately fail (a package missing, writing to stderr).
+# With $ErrorActionPreference = 'Stop' PowerShell 5.1 turns that into a fatal
+# NativeCommandError, so relax it just for these three probes.
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& $python -c "import torch; print('    torch      ', torch.__version__)"
+& $python -c "import torchcodec; print('    torchcodec ', torchcodec.__version__)"
+& $python -c "import torchaudio; print('    torchaudio ', torchaudio.__version__)"
+$ErrorActionPreference = $previousPreference
 
 Write-Host "==> Removing torchcodec and the engine" -ForegroundColor Cyan
 & $python -m pip uninstall -y torchcodec coqui-tts coqui-tts-trainer
@@ -40,6 +46,11 @@ Write-Host "==> Installing the voice engine" -ForegroundColor Cyan
 if ($LASTEXITCODE -ne 0) { throw "coqui-tts could not be installed. Scroll up for the first error." }
 
 Write-Host "==> Checking the engine imports" -ForegroundColor Cyan
+$installedTorch = & $python -c "import torch; print(torch.__version__.split('+')[0])"
+if ([version]$installedTorch -ge [version]"2.9") {
+    throw "PyTorch $installedTorch is still installed; this needs 2.8.x. Run: .\.venv\Scripts\python.exe -m pip install --force-reinstall \"torch==2.8.0\" \"torchaudio==2.8.0\""
+}
+Write-Host "    torch $installedTorch (no torchcodec needed)" -ForegroundColor Gray
 & $python -c "import torch, torchaudio; from TTS.api import TTS; print('    torch', torch.__version__, '- engine loaded')"
 if ($LASTEXITCODE -ne 0) { throw "The engine still will not import. Scroll up for the first error." }
 

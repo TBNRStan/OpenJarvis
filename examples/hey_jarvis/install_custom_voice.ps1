@@ -47,7 +47,11 @@ Write-Host "==> Installing PyTorch audio support (this is the large download)" -
 # audio through torchcodec, which then needs a matching DLL set plus FFmpeg.
 # Staying on 2.8 uses torchaudio's built-in decoding: fewer moving parts, and no
 # version pairing to get wrong. torchcodec is removed so it cannot be picked up.
-& $python -m pip uninstall -y torchcodec 2>$null
+# pip exits non-zero when nothing is installed; that must not be fatal here.
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& $python -m pip uninstall -y torchcodec
+$ErrorActionPreference = $previousPreference
 & $python -m pip install "torch>=2.6,<2.9" "torchaudio>=2.6,<2.9"
 if ($LASTEXITCODE -ne 0) { throw "PyTorch installation failed. Scroll up for the first error." }
 & $python -c "import torch, torchaudio; print('    torch', torch.__version__, '/ torchaudio', torchaudio.__version__)"
