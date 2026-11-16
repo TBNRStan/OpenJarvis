@@ -637,6 +637,30 @@ class Tray:
 # ----------------------------------------------------------------- selftest --
 
 
+KOKORO_BRITISH_MEN = ("bm_george", "bm_lewis", "bm_daniel", "bm_fable")
+VOICE_TEST_LINE = (
+    "Good evening, sir. All systems are online and ready. How may I be of service?"
+)
+
+
+def voice_test(speed: float = voices.DEFAULT_SPEED) -> int:
+    """Speak one line in each British male Kokoro voice so you can choose."""
+    if not voices.kokoro_available():
+        print("Kokoro is not installed. Run install_voice.ps1 first.", file=sys.stderr)
+        return 1
+
+    for name in KOKORO_BRITISH_MEN:
+        print(f"--- {name}", flush=True)
+        try:
+            voices.speak(VOICE_TEST_LINE, backend="kokoro", voice=name, speed=speed)
+        except voices.VoiceError as exc:
+            print(f"    could not speak: {exc}", file=sys.stderr)
+
+    print()
+    print("Keep your favourite with:  run.ps1 --voice kokoro --voice-name bm_lewis")
+    return 0
+
+
 def selftest(model: Optional[str], stt_model: Optional[str] = None) -> int:
     """Check every dependency and device without listening to anything."""
     failures = 0
@@ -734,12 +758,25 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="speech pace: 1.0 is the model default, 0.9 is slower and calmer",
     )
     parser.add_argument(
+        "--voice-name",
+        default=None,
+        help="voice within the engine, e.g. bm_lewis (list them with --voice-test)",
+    )
+    parser.add_argument(
+        "--voice-test",
+        action="store_true",
+        help="speak one line in each British Kokoro voice, then exit, so you can choose",
+    )
+    parser.add_argument(
         "--say",
         default=None,
         help="speak this phrase once, then exit -- the quickest way to audition a voice",
     )
     parser.add_argument("--no-ui", action="store_true", help="run in the console instead of a window")
     args = parser.parse_args(argv)
+
+    if args.voice_test:
+        return voice_test(args.voice_speed)
 
     if args.say:
         try:
@@ -765,6 +802,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             model=args.model,
             stt_model=args.stt,
             voice_backend=args.voice,
+            voice_name=args.voice_name,
             voice_sample=args.voice_sample,
             voice_speed=args.voice_speed,
         )
@@ -791,6 +829,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         model=args.model,
         stt_model=args.stt,
         voice_backend=args.voice,
+        voice_name=args.voice_name,
         voice_sample=args.voice_sample,
         voice_speed=args.voice_speed,
     )
@@ -801,6 +840,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         model=args.model,
         stt_model=args.stt,
         voice_backend=args.voice,
+        voice_name=args.voice_name,
         voice_sample=args.voice_sample,
         voice_speed=args.voice_speed,
     )
