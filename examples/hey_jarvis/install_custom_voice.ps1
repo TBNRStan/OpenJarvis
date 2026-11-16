@@ -42,10 +42,26 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyTorch is installed but torchaudio will not import. Scroll up for the first error."
 }
 
-Write-Host "==> Installing the voice engine (coqui-tts)" -ForegroundColor Cyan
+Write-Host "==> Installing the voice engine (coqui-tts + codec)" -ForegroundColor Cyan
 # transformers 5.x breaks coqui-tts at import time, so keep it on the 4.x line.
-& $python -m pip install coqui-tts "transformers<5" soundfile
+# The codec extra brings torchcodec, required for audio IO from PyTorch 2.9 on.
+& $python -m pip install "coqui-tts[codec]" "transformers<5" soundfile
 if ($LASTEXITCODE -ne 0) { throw "XTTS installation failed. Scroll up for the first error." }
+
+function Test-VoiceEngine {
+    & $python -c "from TTS.api import TTS" 2>&1 | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+if (-not (Test-VoiceEngine)) {
+    Write-Host "==> The engine needs FFmpeg to decode audio; installing it" -ForegroundColor Yellow
+    winget install --id Gyan.FFmpeg --silent --accept-package-agreements --accept-source-agreements
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + `
+                [System.Environment]::GetEnvironmentVariable("Path", "User")
+    if (-not (Test-VoiceEngine)) {
+        throw "The voice engine still will not load. Run this to see why: .\.venv\Scripts\python.exe -c `"from TTS.api import TTS`""
+    }
+}
 
 Write-Host ""
 Write-Host "==> Checking the recording" -ForegroundColor Cyan
